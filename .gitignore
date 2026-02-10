@@ -1,2 +1,7 @@
 .csv
 backend/venv
+
+# Environment Variables
+.env
+.env.*
+!.env.example
