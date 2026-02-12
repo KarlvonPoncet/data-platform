@@ -14,8 +14,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import local modules
-from realtime_api import WienerLinienAPI
-from stations.stations_manager import StationsManager
+from wiener_linien_api import WienerLinienAPI
+from stations_manager import StationsManager
 from transformation_service import TransformationService
 
 # Configure logging

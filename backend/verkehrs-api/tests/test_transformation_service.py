@@ -33,7 +33,7 @@ def test_process_raw_data_success(mock_duckdb):
     found_main_query = False
     for call_args in mock_con.execute.call_args_list:
         query_arg = call_args[0][0]
-        if "CREATE OR REPLACE TABLE refined_data" in query_arg:
+        if "CREATE OR REPLACE TABLE new_refined_data" in query_arg:
             found_main_query = True
             assert "s3://test-bucket/raw/**/*.parquet" in query_arg
             break
@@ -43,9 +43,9 @@ def test_process_raw_data_success(mock_duckdb):
     found_copy = False
     for call_args in mock_con.execute.call_args_list:
         query_arg = call_args[0][0]
-        if "COPY refined_data TO" in query_arg:
+        if "COPY new_refined_data TO" in query_arg:
             found_copy = True
-            assert "s3://test-bucket/refined/traffic_data.parquet" in query_arg
+            assert "s3://test-bucket/refined/traffic_data" in query_arg # output path includes timestamp now
             break
     assert found_copy, "COPY command was not executed"
 

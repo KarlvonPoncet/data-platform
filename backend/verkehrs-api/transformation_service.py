@@ -1,6 +1,7 @@
 import duckdb
 import os
 import logging
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -51,15 +52,37 @@ class TransformationService:
             
             logger.info("DuckDB connected to MinIO.")
             
+            # 1. Determine the high-water mark (latest ingestion timestamp)
+            max_ts = None
+            try:
+                # Check if refined data exists using glob pattern
+                # If no files match, this will likely raise an exception
+                result = con.execute(f"SELECT MAX(ingestion_timestamp) FROM read_parquet('s3://{self.bucket}/refined/*.parquet')").fetchone()
+                if result and result[0]:
+                    max_ts = result[0]
+                    logger.info(f"Found existing refined data. Max timestamp: {max_ts}")
+                else:
+                    logger.info("No existing refined data found (or it is empty).")
+            except Exception as e:
+                # Likely no files found or bucket empty
+                logger.info(f"No existing refined data found (starting fresh). info: {e}")
+                pass
+            
+            # 2. Define the transformation query with incremental logic
+            timestamp_filter = ""
+            if max_ts:
+                # Filter strictly greater than max_ts to avoid duplicates
+                timestamp_filter = f"WHERE ingestion_timestamp > '{max_ts}'"
+            
             # define the transformation query
-            # We use distinct on the result to avoid duplicates if we re-run on same source files
             query = f"""
-                CREATE OR REPLACE TABLE refined_data AS
+                CREATE OR REPLACE TABLE new_refined_data AS
                 WITH raw_source AS (
                     SELECT 
                         ingestion_timestamp,
                         json(raw_json) as data
                     FROM read_parquet('s3://{self.bucket}/raw/**/*.parquet', hive_partitioning=1)
+                    {timestamp_filter}
                 ),
                 unnested_monitors AS (
                     SELECT 
@@ -99,20 +122,21 @@ class TransformationService:
             con.execute(query)
             
             # Check validation
-            count = con.execute("SELECT count(*) FROM refined_data").fetchone()[0]
-            logger.info(f"Transformed data contains {count} rows.")
+            count = con.execute("SELECT count(*) FROM new_refined_data").fetchone()[0]
+            logger.info(f"New data to add: {count} rows.")
             
             if count > 0:
-                # Save to MinIO (overwriting the single refined file for now, or partitioned)
-                # Let's use a single file for the 'current' view, or maybe partition by day?
-                # For simplicity as requested "clean table", let's dump to a file.
-                output_path = f"s3://{self.bucket}/refined/traffic_data.parquet"
-                logger.info(f"Saving refined data to {output_path}...")
+                # Save to MinIO as a NEW file to append to the dataset
+                # Generate unique filename based on current time
+                now_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                output_path = f"s3://{self.bucket}/refined/traffic_data_{now_str}.parquet"
                 
-                con.execute(f"COPY refined_data TO '{output_path}' (FORMAT PARQUET);")
-                logger.info("Transformation and save complete.")
+                logger.info(f"Saving new refined data to {output_path}...")
+                
+                con.execute(f"COPY new_refined_data TO '{output_path}' (FORMAT PARQUET);")
+                logger.info("Incremental update complete.")
             else:
-                logger.warning("No data found to transform.")
+                logger.info("No new data found to transform.")
                 
             con.close()
             

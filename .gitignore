@@ -1,6 +1,7 @@
 .csv
 backend/venv
 __pycache__
+.pytest_cache
 
 # Environment Variables
 .env

@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 import httpx
-from realtime_api import WienerLinienAPI
+from wiener_linien_api import WienerLinienAPI
 
 # Fixture for the API instance
 @pytest.fixture
