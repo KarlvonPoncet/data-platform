@@ -1,0 +1,7 @@
+minio
+pandas
+apscheduler
+python-dotenv
+httpx
+duckdb
+pyarrow

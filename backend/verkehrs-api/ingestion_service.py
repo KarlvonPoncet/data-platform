@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import json
 import pandas as pd
 import io
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ load_dotenv()
 # Import local modules
 from realtime_api import WienerLinienAPI
 from stations.stations_manager import StationsManager
+from transformation_service import TransformationService
 
 # Configure logging
 logging.basicConfig(
@@ -47,6 +49,9 @@ class IngestionService:
         self.stations_manager = StationsManager(url=URL_STATIONS_RBL)
         
         self.rbl_list = []
+        
+        # Initialize Transformation Service
+        self.transformation_service = TransformationService(bucket_name=self.bucket)
 
     async def initialize(self):
         """
@@ -89,50 +94,49 @@ class IngestionService:
             raw_data = await self.api.fetch_batch(self.rbl_list)
             
             if raw_data:
-                # Transform to flat events
-                events = self.api.transform_to_events(raw_data)
+                # Create a simple schema: timestamp + raw_json_blob
+                json_blob = json.dumps(raw_data)
                 
-                if events:
-                    df = pd.DataFrame(events)
-                    
-                    # Generate path components
-                    now = datetime.now(timezone.utc)
-                    year = now.strftime("%Y")
-                    month = now.strftime("%m")
-                    day = now.strftime("%d")
-                    # Format: YYYYMMDDTHHMMSSZ
-                    ts_str = now.strftime("%Y%m%dT%H%M%SZ")
-                    
-                    object_name = f"raw/year={year}/month={month}/day={day}/snapshot_ts={ts_str}.parquet"
-                    
-                    # Check if file already exists to prevent duplicates (rudimentary uniqueness check)
-                    try:
-                        self.minio_client.stat_object(self.bucket, object_name)
-                        logger.warning(f"Object {object_name} already exists. Skipping upload to ensure uniqueness.")
-                        return
-                    except Exception:
-                        # Object does not exist, proceed
-                        pass
+                df = pd.DataFrame([{
+                    "ingestion_timestamp": datetime.now(timezone.utc),
+                    "raw_json": json_blob
+                }])
+                
+                # Generate path components
+                now = datetime.now(timezone.utc)
+                year = now.strftime("%Y")
+                month = now.strftime("%m")
+                day = now.strftime("%d")
+                # Format: YYYYMMDDTHHMMSSZ
+                ts_str = now.strftime("%Y%m%dT%H%M%SZ")
+                
+                object_name = f"raw/year={year}/month={month}/day={day}/snapshot_ts={ts_str}.parquet"
+                
+                # Check if file already exists (unlikely given timestamp in name)
+                try:
+                    self.minio_client.stat_object(self.bucket, object_name)
+                    logger.warning(f"Object {object_name} already exists. Skipping upload to ensure uniqueness.")
+                    return
+                except Exception:
+                    pass
 
-                    # Convert DataFrame to Parquet in-memory
-                    buffer = io.BytesIO()
-                    df.to_parquet(buffer, index=False)
-                    buffer.seek(0)
-                    data_length = len(buffer.getvalue())
-                    
-                    # Upload to MinIO
-                    self.minio_client.put_object(
-                        self.bucket,
-                        object_name,
-                        buffer,
-                        data_length,
-                        content_type="application/octet-stream"
-                    )
-                    
-                    logger.info(f"Uploaded {len(df)} events to s3://{self.bucket}/{object_name} ({data_length} bytes)")
+                # Convert DataFrame to Parquet in-memory
+                buffer = io.BytesIO()
+                df.to_parquet(buffer, index=False)
+                buffer.seek(0)
+                data_length = len(buffer.getvalue())
+                
+                # Upload to MinIO
+                self.minio_client.put_object(
+                    self.bucket,
+                    object_name,
+                    buffer,
+                    data_length,
+                    content_type="application/octet-stream"
+                )
+                
+                logger.info(f"Uploaded raw snapshot to s3://{self.bucket}/{object_name} ({data_length} bytes)")
 
-                else:
-                    logger.info("No events found in response.")
             else:
                 logger.warning("No data received from API.")
                 
@@ -165,7 +169,18 @@ class IngestionService:
                 replace_existing=True
             )
             
-            logger.info(f"Starting scheduler with interval {self.interval_seconds}s...")
+            # Add transformation job (e.g., every hour)
+            # You might want to make this configurable via env var
+            transformation_interval = int(os.getenv("TRANSFORMATION_INTERVAL", 3600))
+            self.scheduler.add_job(
+                self.transformation_service.process_raw_data,
+                trigger=IntervalTrigger(seconds=transformation_interval),
+                id='transform_data',
+                name='Transform Raw Data to Refined Layer',
+                replace_existing=True
+            )
+            
+            logger.info(f"Starting scheduler with fetch interval {self.interval_seconds}s and transform interval {transformation_interval}s...")
             self.scheduler.start()
 
 async def main():

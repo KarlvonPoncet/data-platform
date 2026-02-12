@@ -1,7 +1,12 @@
 .csv
 backend/venv
+__pycache__
 
 # Environment Variables
 .env
 .env.*
 !.env.example
+
+# MinIO
+minio
+minio/data

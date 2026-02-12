@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch, mock_open, AsyncMock
 import pandas as pd
 import os
 from stations.stations_manager import StationsManager
