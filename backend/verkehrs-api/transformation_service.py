@@ -1,7 +1,10 @@
 import duckdb
 import os
 import logging
+import asyncio
 from datetime import datetime, timezone
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -19,13 +22,16 @@ class TransformationService:
     Service to transform raw JSON data from MinIO into a structured DuckDB table
     and save it back to MinIO as a refined layer.
     """
-    def __init__(self, bucket_name: str = None):
+    def __init__(self, bucket_name: str = None, interval_seconds: int = None):
         self.bucket = bucket_name or os.getenv("MINIO_BUCKET_NAME", "traffic-data")
         self.api_endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
         self.access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
         self.secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin")
         
-    def process_raw_data(self):
+        self.interval_seconds = interval_seconds or int(os.getenv("TRANSFORMATION_INTERVAL", 3600))
+        self.scheduler = AsyncIOScheduler()
+        
+    async def process_raw_data(self):
         """
         Reads raw parquet files from MinIO, extracts structured data using DuckDB,
         and saves the result to the refined layer in MinIO.
@@ -142,8 +148,35 @@ class TransformationService:
             
         except Exception as e:
             logger.error(f"Transformation failed: {e}")
-            raise
+            # Don't raise in scheduled job or it might stop the scheduler depending on config.
+            # But logging is enough.
+
+    def start(self):
+        """
+        Starts the scheduler.
+        """
+        if not self.scheduler.running:
+            self.scheduler.add_job(
+                self.process_raw_data,
+                trigger=IntervalTrigger(seconds=self.interval_seconds),
+                id='transform_data',
+                name='Transform Raw Data to Refined Layer',
+                replace_existing=True
+            )
+            logger.info(f"Starting transformation scheduler with interval {self.interval_seconds}s...")
+            self.scheduler.start()
+
+async def main():
+    service = TransformationService()
+    service.start()
+    
+    # Keep the script running
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Stopping transformation service...")
+        service.scheduler.shutdown()
 
 if __name__ == "__main__":
-    service = TransformationService()
-    service.process_raw_data()
+    asyncio.run(main())

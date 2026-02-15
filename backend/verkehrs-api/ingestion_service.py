@@ -16,7 +16,7 @@ load_dotenv()
 # Import local modules
 from wiener_linien_api import WienerLinienAPI
 from stations_manager import StationsManager
-from transformation_service import TransformationService
+
 
 # Configure logging
 logging.basicConfig(
@@ -51,7 +51,7 @@ class IngestionService:
         self.rbl_list = []
         
         # Initialize Transformation Service
-        self.transformation_service = TransformationService(bucket_name=self.bucket)
+
 
     async def initialize(self):
         """
@@ -170,17 +170,9 @@ class IngestionService:
             )
             
             # Add transformation job (e.g., every hour)
-            # You might want to make this configurable via env var
-            transformation_interval = int(os.getenv("TRANSFORMATION_INTERVAL", 3600))
-            self.scheduler.add_job(
-                self.transformation_service.process_raw_data,
-                trigger=IntervalTrigger(seconds=transformation_interval),
-                id='transform_data',
-                name='Transform Raw Data to Refined Layer',
-                replace_existing=True
-            )
+
             
-            logger.info(f"Starting scheduler with fetch interval {self.interval_seconds}s and transform interval {transformation_interval}s...")
+            logger.info(f"Starting scheduler with fetch interval {self.interval_seconds}s...")
             self.scheduler.start()
 
 async def main():

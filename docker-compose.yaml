@@ -1,13 +1,12 @@
 version: '3.8'
 
 services:
-  # MinIO Object Storage Service
   minio:
     image: minio/minio:latest
     container_name: minio
     ports:
-      - "9000:9000" # API access
-      - "9001:9001" # Web Console access
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio_data:/data
     environment:
@@ -15,7 +14,65 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
     command: server /data --console-address ":9001"
     restart: unless-stopped
+    networks:
+      - traffic-net
+
+  ingestion-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ingestion-service
+    depends_on:
+      - minio
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      INGESTION_INTERVAL: 60
+    command: python ingestion_service.py
+    restart: unless-stopped
+    networks:
+      - traffic-net
+
+  transformation-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: transformation-service
+    depends_on:
+      - minio
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      TRANSFORMATION_INTERVAL: 600
+    command: python transformation_service.py
+    restart: unless-stopped
+    networks:
+      - traffic-net
+
+  dashboard:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dashboard
+    ports:
+      - "8501:8501"
+    depends_on:
+      - minio
+      - transformation-service
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    restart: unless-stopped
+    networks:
+      - traffic-net
 
 volumes:
   minio_data:
     driver: local
+
+networks:
+  traffic-net:
+    driver: bridge
