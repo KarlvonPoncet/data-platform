@@ -100,6 +100,7 @@ class TransformationService:
                     SELECT 
                         ingestion_timestamp,
                         monitor.locationStop.properties.title::VARCHAR as station_name,
+                        monitor.locationStop.properties.attributes.rbl::INTEGER as rbl,
                         unnest(CAST(monitor.lines AS JSON[])) as line
                     FROM unnested_monitors
                 ),
@@ -107,20 +108,27 @@ class TransformationService:
                     SELECT 
                         ingestion_timestamp,
                         station_name,
+                        rbl,
                         line.name::VARCHAR as line,
                         line.towards::VARCHAR as direction,
                         unnest(CAST(line.departures.departure AS JSON[])) as dep
                     FROM unnested_lines
                 )
-                SELECT DISTINCT
+                SELECT 
                     ingestion_timestamp,
                     station_name,
+                    rbl,
                     line,
                     direction,
                     dep.departureTime.timePlanned::VARCHAR as time_planned,
                     dep.departureTime.timeReal::VARCHAR as time_real,
                     dep.departureTime.countdown::INTEGER as countdown
                 FROM unnested_departures
+                WHERE line LIKE 'U%'
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY rbl, line, direction, dep.departureTime.timePlanned::VARCHAR 
+                    ORDER BY ingestion_timestamp DESC
+                ) = 1
                 ORDER BY ingestion_timestamp DESC;
             """
             
