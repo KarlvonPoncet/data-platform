@@ -7,6 +7,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
 
+from core.state_manager import StateManager
+
 # Load environment variables
 load_dotenv()
 
@@ -30,6 +32,7 @@ class TransformationService:
         
         self.interval_seconds = interval_seconds or int(os.getenv("TRANSFORMATION_INTERVAL", 3600))
         self.scheduler = AsyncIOScheduler()
+        self.state_manager = StateManager()
         
     async def process_raw_data(self):
         """
@@ -58,27 +61,32 @@ class TransformationService:
             
             logger.info("DuckDB connected to MinIO.")
             
-            # 1. Determine the high-water mark (latest ingestion timestamp)
-            max_ts = None
-            try:
-                # Check if refined data exists using glob pattern
-                # If no files match, this will likely raise an exception
-                result = con.execute(f"SELECT MAX(ingestion_timestamp) FROM read_parquet('s3://{self.bucket}/refined/*.parquet')").fetchone()
-                if result and result[0]:
-                    max_ts = result[0]
-                    logger.info(f"Found existing refined data. Max timestamp: {max_ts}")
-                else:
-                    logger.info("No existing refined data found (or it is empty).")
-            except Exception as e:
-                # Likely no files found or bucket empty
-                logger.info(f"No existing refined data found (starting fresh). info: {e}")
-                pass
+            # 1. Determine the high-water mark via StateManager
+            max_ts = self.state_manager.get_last_processed_timestamp("raw_to_refined")
+            if max_ts:
+                logger.info(f"Loaded high-water mark from state: {max_ts}")
+            else:
+                logger.info("No existing state found (starting fresh).")
             
             # 2. Define the transformation query with incremental logic
             timestamp_filter = ""
             if max_ts:
-                # Filter strictly greater than max_ts to avoid duplicates
-                timestamp_filter = f"WHERE ingestion_timestamp > '{max_ts}'"
+                try:
+                    # Handle both datetime objects and strings
+                    if isinstance(max_ts, str):
+                        max_ts_obj = datetime.fromisoformat(max_ts.replace('Z', '+00:00'))
+                    else:
+                        max_ts_obj = max_ts
+                        
+                    max_ts_str = max_ts_obj.strftime("%Y%m%dT%H%M%SZ")
+                    max_year = max_ts_obj.strftime("%Y")
+                    
+                    # Partition filtering added to drastically reduce files scanned
+                    # ingestion_timestamp > max_ts prevents duplicates
+                    timestamp_filter = f"WHERE ingestion_timestamp > '{max_ts}' AND year >= '{max_year}' AND snapshot_ts >= '{max_ts_str}'"
+                except Exception as e:
+                    logger.warning(f"Failed to create partition filters: {e}")
+                    timestamp_filter = f"WHERE ingestion_timestamp > '{max_ts}'"
             
             # define the transformation query
             query = f"""
@@ -149,6 +157,15 @@ class TransformationService:
                 
                 con.execute(f"COPY new_refined_data TO '{output_path}' (FORMAT PARQUET);")
                 logger.info("Incremental update complete.")
+                
+                # Update StateManager with newest timestamp (max of this batch)
+                max_new_ts = con.execute("SELECT MAX(ingestion_timestamp) FROM new_refined_data").fetchone()[0]
+                if max_new_ts:
+                    # Convert object to string if needed
+                    if not isinstance(max_new_ts, str):
+                        max_new_ts = max_new_ts.strftime("%Y-%m-%d %H:%M:%S.%f%z")
+                    self.state_manager.set_last_processed_timestamp("raw_to_refined", str(max_new_ts))
+                    
             else:
                 logger.info("No new data found to transform.")
                 

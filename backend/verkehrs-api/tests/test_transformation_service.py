@@ -1,13 +1,14 @@
 import pytest
 from unittest.mock import MagicMock, patch, call
-from transformation_service import TransformationService
+from services.transformation_service import TransformationService
 
 @pytest.fixture
 def mock_duckdb():
     with patch("duckdb.connect") as mock:
         yield mock
 
-def test_process_raw_data_success(mock_duckdb):
+@pytest.mark.asyncio
+async def test_process_raw_data_success(mock_duckdb):
     # Setup
     mock_con = MagicMock()
     mock_duckdb.return_value = mock_con
@@ -18,7 +19,7 @@ def test_process_raw_data_success(mock_duckdb):
     service = TransformationService(bucket_name="test-bucket")
     
     # Execute
-    service.process_raw_data()
+    await service.process_raw_data()
     
     # Verify connection and setup
     mock_duckdb.assert_called_once()
@@ -49,7 +50,8 @@ def test_process_raw_data_success(mock_duckdb):
             break
     assert found_copy, "COPY command was not executed"
 
-def test_process_raw_data_no_data(mock_duckdb):
+@pytest.mark.asyncio
+async def test_process_raw_data_no_data(mock_duckdb):
     # Setup
     mock_con = MagicMock()
     mock_duckdb.return_value = mock_con
@@ -60,7 +62,7 @@ def test_process_raw_data_no_data(mock_duckdb):
     service = TransformationService(bucket_name="test-bucket")
     
     # Execute
-    service.process_raw_data()
+    await service.process_raw_data()
     
     # Verify COPY was NOT executed
     for call_args in mock_con.execute.call_args_list:

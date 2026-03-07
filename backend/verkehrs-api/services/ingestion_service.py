@@ -1,11 +1,7 @@
 import asyncio
 import logging
 import os
-import json
-import pandas as pd
-import io
 from datetime import datetime, timezone
-from minio import Minio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
@@ -14,8 +10,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import local modules
-from wiener_linien_api import WienerLinienAPI
-from stations_manager import StationsManager
+from clients.wiener_linien_api import WienerLinienAPI
+from clients.stations_manager import StationsManager
+from core.minio_manager import MinioManager
+from core.data_formatter import DataFormatter
 
 
 # Configure logging
@@ -36,13 +34,8 @@ class IngestionService:
         self.scheduler = AsyncIOScheduler()
         self.api = WienerLinienAPI()
         
-        # MinIO Client Configuration
-        self.minio_client = Minio(
-            os.getenv("MINIO_ENDPOINT", "localhost:9000"),
-            access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
-            secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
-            secure=False
-        )
+        # Storage Configuration
+        self.storage = MinioManager(bucket_name=self.bucket)
         
         # Initialize StationsManager with the default URL
         URL_STATIONS_RBL = os.getenv("WIENER_P_STATIONS_URL", "https://www.wienerlinien.at/ogd_realtime/doku/ogd/wienerlinien-ogd-haltepunkte.csv")
@@ -61,14 +54,9 @@ class IngestionService:
         
         # Ensure bucket exists
         try:
-            if not self.minio_client.bucket_exists(self.bucket):
-                self.minio_client.make_bucket(self.bucket)
-                logger.info(f"Created bucket '{self.bucket}'")
-            else:
-                logger.info(f"Bucket '{self.bucket}' already exists.")
-        except Exception as e:
-            logger.error(f"Failed to connect to MinIO: {e}")
-            return # Don't proceed if MinIO is down? Or run anyway? Better to return early if no storage.
+            self.storage.ensure_bucket_exists()
+        except Exception:
+            return # Don't proceed if MinIO is down. Better to return early.
 
         # Get U-Bahn stations (cached or fetch new)
         df_stations = await self.stations_manager.get_ubahn_stations()
@@ -92,54 +80,17 @@ class IngestionService:
         try:
             # Fetch data
             raw_data = await self.api.fetch_batch(self.rbl_list)
-            
-            if raw_data:
-                # Create a simple schema: timestamp + raw_json_blob
-                json_blob = json.dumps(raw_data)
-                
-                df = pd.DataFrame([{
-                    "ingestion_timestamp": datetime.now(timezone.utc),
-                    "raw_json": json_blob
-                }])
-                
-                # Generate path components
-                now = datetime.now(timezone.utc)
-                year = now.strftime("%Y")
-                month = now.strftime("%m")
-                day = now.strftime("%d")
-                # Format: YYYYMMDDTHHMMSSZ
-                ts_str = now.strftime("%Y%m%dT%H%M%SZ")
-                
-                object_name = f"raw/year={year}/month={month}/day={day}/snapshot_ts={ts_str}.parquet"
-                
-                # Check if file already exists (unlikely given timestamp in name)
-                try:
-                    self.minio_client.stat_object(self.bucket, object_name)
-                    logger.warning(f"Object {object_name} already exists. Skipping upload to ensure uniqueness.")
-                    return
-                except Exception:
-                    pass
 
-                # Convert DataFrame to Parquet in-memory
-                buffer = io.BytesIO()
-                df.to_parquet(buffer, index=False)
-                buffer.seek(0)
-                data_length = len(buffer.getvalue())
-                
-                # Upload to MinIO
-                self.minio_client.put_object(
-                    self.bucket,
-                    object_name,
-                    buffer,
-                    data_length,
-                    content_type="application/octet-stream"
-                )
-                
-                logger.info(f"Uploaded raw snapshot to s3://{self.bucket}/{object_name} ({data_length} bytes)")
-
-            else:
+            if not raw_data:
                 logger.warning("No data received from API.")
-                
+                return
+            
+            now = datetime.now(timezone.utc)
+            df = DataFormatter.format_raw_to_dataframe(raw_data, now)
+            object_name = DataFormatter.generate_partitioned_object_name(now)
+            
+            self.storage.upload_dataframe_as_parquet(df, object_name)
+
         except Exception as e:
             logger.error(f"Error in fetch_and_save job: {e}")
 

@@ -1,8 +1,9 @@
 .csv
-backend/venv
 __pycache__
 .pytest_cache
 .parquet
+.venv
+pipeline_state.json
 
 # Environment Variables
 .env

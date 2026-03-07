@@ -29,7 +29,7 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       INGESTION_INTERVAL: 60
-    command: python ingestion_service.py
+    command: python services/ingestion_service.py
     restart: unless-stopped
     networks:
       - traffic-net
@@ -46,7 +46,24 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       TRANSFORMATION_INTERVAL: 600
-    command: python transformation_service.py
+    command: python services/transformation_service.py
+    restart: unless-stopped
+    networks:
+      - traffic-net
+
+  feature-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: feature-service
+    depends_on:
+      - minio
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      FEATURE_INTERVAL: 3600
+    command: python services/feature_service.py
     restart: unless-stopped
     networks:
       - traffic-net

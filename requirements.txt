@@ -12,3 +12,5 @@ streamlit
 altair
 plotly
 
+pytest
+

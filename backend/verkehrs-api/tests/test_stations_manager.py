@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch, mock_open, AsyncMock
 import pandas as pd
 import os
-from stations_manager import StationsManager
+from clients.stations_manager import StationsManager
 
 # Helper to create a dummy DataFrame
 def create_dummy_df():

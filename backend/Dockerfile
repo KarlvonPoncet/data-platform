@@ -12,6 +12,7 @@ COPY verkehrs-api/ /app/
 ENV MINIO_ENDPOINT=minio:9000
 ENV MINIO_ACCESS_KEY=minioadmin
 ENV MINIO_SECRET_KEY=minioadmin
+ENV PYTHONPATH=/app
 
 # Default command (will be overridden in docker-compose)
-CMD ["python", "ingestion_service.py"]
+CMD ["python", "services/ingestion_service.py"]
