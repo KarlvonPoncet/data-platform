@@ -2,8 +2,10 @@
 __pycache__
 .pytest_cache
 .parquet
+.agents
 .venv
 pipeline_state.json
+
 
 # Environment Variables
 .env
